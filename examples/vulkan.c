@@ -4,6 +4,7 @@
 
 #include <assert.h>
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -245,14 +246,15 @@ void vulkan_setup(MwWidget handle) {
 	fseek(vertFile, 0L, SEEK_END);
 	vertFileSize = ftell(vertFile);
 	rewind(vertFile);
-	vertBuf	   = malloc(vertFileSize);
-	amountRead = fread(vertBuf, sizeof(char), vertFileSize, vertFile);
+	vertBuf = malloc(vertFileSize);
+	memset(vertBuf, 0, vertFileSize);
+	amountRead = fread(vertBuf, 1, vertFileSize, vertFile);
 	printf("triangle.vert.spv: read %ld bytes\n", amountRead);
 
 	vertInfo.sType	  = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 	vertInfo.pNext	  = NULL;
 	vertInfo.flags	  = 0;
-	vertInfo.codeSize = vertFileSize * sizeof(uint32_t);
+	vertInfo.codeSize = amountRead;
 	vertInfo.pCode	  = vertBuf;
 
 	if(createShaderModuleFunc(device, &vertInfo, NULL, &vertShaderModule) != VK_SUCCESS) {
@@ -264,14 +266,15 @@ void vulkan_setup(MwWidget handle) {
 	fseek(fragFile, 0L, SEEK_END);
 	fragFileSize = ftell(fragFile);
 	rewind(fragFile);
-	fragBuf	   = malloc(fragFileSize);
-	amountRead = fread(fragBuf, sizeof(char), fragFileSize, fragFile);
+	fragBuf = malloc(fragFileSize);
+	memset(fragBuf, 0, fragFileSize);
+	amountRead = fread(fragBuf, 1, fragFileSize, fragFile);
 	printf("triangle.frag.spv: read %ld bytes\n", amountRead);
 
 	fragInfo.sType	  = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 	fragInfo.pNext	  = NULL;
 	fragInfo.flags	  = 0;
-	fragInfo.codeSize = fragFileSize * sizeof(uint32_t);
+	fragInfo.codeSize = amountRead;
 	fragInfo.pCode	  = fragBuf;
 
 	if(createShaderModuleFunc(device, &fragInfo, NULL, &fragShaderModule) != VK_SUCCESS) {

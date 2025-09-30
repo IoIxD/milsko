@@ -8,18 +8,16 @@
 #include <stdlib.h>
 
 #include <string.h>
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_core.h>
-#include <vulkan/vk_enum_string_helper.h>
 
 #ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR 1
-#include <vulkan/vulkan_win32.h>
 #endif
 #ifdef __linux__
 #define VK_USE_PLATFORM_XLIB_KHR 1
-#include <vulkan/vulkan_xlib.h>
 #endif
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
+#include <vulkan/vk_enum_string_helper.h>
 
 #include <dlfcn.h>
 #include <assert.h>
@@ -116,7 +114,6 @@ static void vulkan_instance_setup(MwWidget handle, vulkan_t* o) {
 		extensions[i] = ext_props[i].extensionName;
 		enabled_extension_count++;
 	}
-	extensions[i + 1] = NULL;
 
 	app_info = (VkApplicationInfo){
 	    .sType		= VK_STRUCTURE_TYPE_APPLICATION_INFO,
