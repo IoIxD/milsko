@@ -1,4 +1,8 @@
 /* $Id$ */
+/*!
+ * %file Mw/Milsko.h
+ * %brief Includes all headers
+ */
 #ifndef __MW_MILSKO_H__
 #define __MW_MILSKO_H__
 
@@ -10,6 +14,7 @@
 #include <Mw/Default.h>
 #include <Mw/Draw.h>
 #include <Mw/Font.h>
+#include <Mw/Error.h>
 
 #include <Mw/Window.h>
 #include <Mw/Button.h>

@@ -1,4 +1,8 @@
 /* $Id$ */
+/*!
+ * %file Mw/MachDep.h
+ * %param Machine dependent headers and macros
+ */
 #ifndef __MW_MACHDEP_H__
 #define __MW_MACHDEP_H__
 
@@ -6,10 +10,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <setjmp.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #endif
 
 #if defined(_MILSKO) && defined(_WIN32)

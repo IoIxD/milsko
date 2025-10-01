@@ -1,12 +1,13 @@
 /* $Id$ */
+/*!
+ * %file Mw/GDI.h
+ * %brief GDI backend
+ * %warning This is used internally
+ */
 #ifndef __MW_GDI_H__
 #define __MW_GDI_H__
 
 #include <Mw/MachDep.h>
-
-typedef struct _MwLL *	   MwLL, MwLLRec;
-typedef struct _MwLLColor *MwLLColor, MwLLColorRec;
-
 #include <Mw/TypeDefs.h>
 #include <Mw/LowLevel.h>
 
@@ -16,6 +17,7 @@ struct _MwLL {
 	HWND  hWnd;
 	HDC   hDC;
 	void* user;
+	int   copy_buffer;
 
 	MwLLHandler handler;
 };
@@ -26,6 +28,13 @@ struct _MwLLColor {
 	int red;
 	int green;
 	int blue;
+};
+
+struct _MwLLPixmap {
+	int width;
+	int height;
+
+	HBITMAP hBitmap;
 };
 
 #endif

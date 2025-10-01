@@ -1,4 +1,8 @@
 /* $Id$ */
+/*!
+ * %file Mw/TypeDefs.h
+ * %brief Type definitions
+ */
 #ifndef __MW_TYPEDEFS_H__
 #define __MW_TYPEDEFS_H__
 
@@ -10,6 +14,7 @@ typedef struct _MwRect		      MwRect;
 typedef struct _MwIntegerKeyValue     MwIntegerKeyValue;
 typedef struct _MwTextKeyValue	      MwTextKeyValue;
 typedef struct _MwUserHandlerKeyValue MwUserHandlerKeyValue;
+typedef struct _MwVoidKeyValue	      MwVoidKeyValue;
 typedef struct _MwFont		      MwFont;
 #ifdef _MILSKO
 typedef struct _MwWidget *MwWidget, MwWidgetRec;
@@ -18,6 +23,7 @@ typedef void* MwWidget;
 #endif
 typedef void (*MwHandler)(MwWidget handle);
 typedef void (*MwUserHandler)(MwWidget handle, void* user_data, void* call_data);
+typedef void (*MwErrorHandler)(int code, const char* message, void* user_data);
 
 #ifdef _MILSKO
 #include <Mw/LowLevel.h>
@@ -51,6 +57,11 @@ struct _MwUserHandlerKeyValue {
 	MwUserHandler value;
 };
 
+struct _MwVoidKeyValue {
+	char* key;
+	void* value;
+};
+
 #ifdef _MILSKO
 struct _MwWidget {
 	char* name;
@@ -60,14 +71,16 @@ struct _MwWidget {
 	MwWidget* children;
 	MwClass	  widget_class;
 
-	int pressed;
-	int close;
+	int	pressed;
+	int	close;
+	jmp_buf before_step;
 
 	void* internal;
 
 	MwIntegerKeyValue*     integer;
 	MwTextKeyValue*	       text;
 	MwUserHandlerKeyValue* handler;
+	MwVoidKeyValue*	       data;
 };
 #endif
 
