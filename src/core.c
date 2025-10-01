@@ -57,10 +57,12 @@ MwWidget MwCreateWidget(MwClass widget_class, const char* name, MwWidget parent,
 	sh_new_strdup(h->text);
 	sh_new_strdup(h->integer);
 	sh_new_strdup(h->handler);
+	sh_new_strdup(h->data);
 
 	shdefault(h->integer, -1);
 	shdefault(h->text, NULL);
 	shdefault(h->handler, NULL);
+	shdefault(h->data, NULL);
 
 	MwDispatch(h, create);
 
@@ -122,12 +124,14 @@ void MwDestroyWidget(MwWidget handle) {
 	}
 	shfree(handle->text);
 	shfree(handle->handler);
+	shfree(handle->data);
 
 	free(handle);
 }
 
 void MwStep(MwWidget handle) {
 	int i;
+	if(setjmp(handle->before_step)) return;
 	for(i = 0; i < arrlen(handle->children); i++) MwStep(handle->children[i]);
 	MwLLNextEvent(handle->lowlevel);
 }
@@ -181,6 +185,14 @@ void MwSetText(MwWidget handle, const char* key, const char* value) {
 	}
 }
 
+void MwSetVoid(MwWidget handle, const char* key, void* value) {
+	if(strcmp(key, MwNiconPixmap) == 0) {
+		MwLLSetIcon(handle->lowlevel, value);
+	} else {
+		shput(handle->data, key, value);
+	}
+}
+
 int MwGetInteger(MwWidget handle, const char* key) {
 	if(strcmp(key, MwNx) == 0 || strcmp(key, MwNy) == 0 || strcmp(key, MwNwidth) == 0 || strcmp(key, MwNheight) == 0) {
 		int	     x, y;
@@ -200,6 +212,10 @@ int MwGetInteger(MwWidget handle, const char* key) {
 
 const char* MwGetText(MwWidget handle, const char* key) {
 	return shget(handle->text, key);
+}
+
+void* MwGetVoid(MwWidget handle, const char* key) {
+	return shget(handle->data, key);
 }
 
 void MwVaApply(MwWidget handle, ...) {
@@ -227,6 +243,9 @@ void MwVaListApply(MwWidget handle, va_list va) {
 			shput(handle->handler, key, h);
 			ind			       = shgeti(handle->handler, key);
 			handle->handler[ind].user_data = NULL;
+		} else if(key[0] == 'V') {
+			void* v = va_arg(va, void*);
+			MwSetVoid(handle, key, v);
 		}
 	}
 }
@@ -249,4 +268,31 @@ void MwAddUserHandler(MwWidget handle, const char* key, MwUserHandler handler, v
 	shput(handle->handler, key, handler);
 	ind			       = shgeti(handle->handler, key);
 	handle->handler[ind].user_data = user_data;
+}
+
+static MwErrorHandler error_handler   = NULL;
+static void*	      error_user_data = NULL;
+
+void MwSetErrorHandler(MwErrorHandler handler, void* user_data) {
+	error_handler	= handler;
+	error_user_data = user_data;
+}
+
+void MwDispatchError(int code, const char* message) {
+	if(error_handler != NULL) {
+		error_handler(code, message, error_user_data);
+	} else {
+#ifdef _WIN32
+		char buffer[1024];
+		sprintf(buffer, "Error: %s\r\nCode : %d\r\n\r\nMilsko is exiting.", message, code);
+		MessageBox(NULL, buffer, "Error", MB_ICONERROR | MB_OK);
+#else
+		fprintf(stderr, "Error: %s\nCode : %d\n\nMilsko is exiting.", message, code);
+#endif
+		exit(1);
+	}
+}
+
+void MwGetBeforeStep(MwWidget handle, jmp_buf* jmpbuf) {
+	memcpy(jmpbuf, &handle->before_step, sizeof(*jmpbuf));
 }

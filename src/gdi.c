@@ -28,9 +28,11 @@ static LRESULT CALLBACK wndproc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
 		u->ll->hDC = hbdc;
 		MwLLDispatch(u->ll, draw);
 
-		dc = BeginPaint(hWnd, &ps);
-		StretchBlt(dc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, hbdc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SRCCOPY);
-		EndPaint(hWnd, &ps);
+		if(u->ll->copy_buffer) {
+			dc = BeginPaint(hWnd, &ps);
+			StretchBlt(dc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, hbdc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SRCCOPY);
+			EndPaint(hWnd, &ps);
+		}
 
 		DeleteDC(hbdc);
 		DeleteObject(hbmp);
@@ -45,6 +47,7 @@ static LRESULT CALLBACK wndproc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
 	} else if(msg == WM_SIZE) {
 		MwLLDispatch(u->ll, resize);
 	} else if(msg == WM_ERASEBKGND) {
+		return 1;
 	} else if(msg == WM_NCHITTEST) {
 		return HTCLIENT;
 	} else if(msg == WM_DESTROY) {
@@ -75,13 +78,14 @@ MwLL MwLLCreate(MwLL parent, int x, int y, int width, int height) {
 	wc.hCursor	 = LoadCursor(NULL, IDC_ARROW);
 	wc.hbrBackground = GetSysColorBrush(COLOR_MENU);
 	wc.hIcon	 = LoadIcon(NULL, IDI_WINLOGO);
-	wc.hIconSm	 = LoadIcon(NULL, IDI_WINLOGO);
+	wc.hIconSm	 = NULL;
 
 	MwLLCreateCommon(r);
 
 	RegisterClassEx(&wc);
 
-	r->hWnd = CreateWindow(parent == NULL ? "milsko" : "STATIC", "Milsko", parent == NULL ? (WS_OVERLAPPEDWINDOW) : (WS_CHILD | WS_VISIBLE), x, y, width, height, parent == NULL ? NULL : parent->hWnd, 0, wc.hInstance, NULL);
+	r->copy_buffer = 1;
+	r->hWnd	       = CreateWindow(parent == NULL ? "milsko" : "STATIC", "Milsko", parent == NULL ? (WS_OVERLAPPEDWINDOW) : (WS_CHILD | WS_VISIBLE), x, y, width, height, parent == NULL ? NULL : parent->hWnd, 0, wc.hInstance, NULL);
 
 	u->ll = r;
 	if(parent == NULL) {
@@ -93,8 +97,6 @@ MwLL MwLLCreate(MwLL parent, int x, int y, int width, int height) {
 
 	if(parent == NULL) {
 		RECT rc;
-		ShowWindow(r->hWnd, SW_NORMAL);
-		UpdateWindow(r->hWnd);
 
 		rc.left	  = 0;
 		rc.top	  = 0;
@@ -102,6 +104,11 @@ MwLL MwLLCreate(MwLL parent, int x, int y, int width, int height) {
 		rc.bottom = height;
 		AdjustWindowRect(&rc, GetWindowLongPtr(r->hWnd, GWL_STYLE), FALSE);
 		SetWindowPos(r->hWnd, NULL, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOMOVE);
+
+		ShowWindow(r->hWnd, SW_NORMAL);
+		UpdateWindow(r->hWnd);
+
+		InvalidateRect(r->hWnd, NULL, FALSE);
 	}
 
 	return r;
@@ -209,4 +216,83 @@ void MwLLNextEvent(MwLL handle) {
 
 void MwLLSleep(int ms) {
 	Sleep(ms);
+}
+
+MwLLPixmap MwLLCreatePixmap(MwLL handle, unsigned char* data, int width, int height) {
+	MwLLPixmap	 r  = malloc(sizeof(*r));
+	HDC		 dc = GetDC(handle->hWnd);
+	BITMAPINFOHEADER bmih;
+	RGBQUAD*	 quad = NULL;
+	int		 y, x;
+
+	r->width  = width;
+	r->height = height;
+
+	bmih.biSize	     = sizeof(bmih);
+	bmih.biWidth	     = width;
+	bmih.biHeight	     = -(LONG)height;
+	bmih.biPlanes	     = 1;
+	bmih.biBitCount	     = 32;
+	bmih.biCompression   = BI_RGB;
+	bmih.biSizeImage     = 0;
+	bmih.biXPelsPerMeter = 0;
+	bmih.biYPelsPerMeter = 0;
+	bmih.biClrUsed	     = 0;
+	bmih.biClrImportant  = 0;
+
+	r->hBitmap = CreateDIBSection(dc, (BITMAPINFO*)&bmih, DIB_RGB_COLORS, (void**)&quad, NULL, (DWORD)0);
+
+	for(y = 0; y < height; y++) {
+		for(x = 0; x < width; x++) {
+			RGBQUAD*       q  = &quad[y * width + x];
+			unsigned char* px = &data[(y * width + x) * 4];
+			q->rgbRed	  = px[0];
+			q->rgbGreen	  = px[1];
+			q->rgbBlue	  = px[2];
+		}
+	}
+
+	ReleaseDC(handle->hWnd, dc);
+
+	return r;
+}
+
+void MwLLDestroyPixmap(MwLLPixmap pixmap) {
+	DeleteObject(pixmap->hBitmap);
+
+	free(pixmap);
+}
+
+void MwLLDrawPixmap(MwLL handle, MwRect* rect, MwLLPixmap pixmap) {
+	HDC hmdc = CreateCompatibleDC(handle->hDC);
+
+	SelectObject(hmdc, pixmap->hBitmap);
+
+	SetStretchBltMode(handle->hDC, HALFTONE);
+	StretchBlt(handle->hDC, rect->x, rect->y, rect->width, rect->height, hmdc, 0, 0, pixmap->width, pixmap->height, SRCCOPY);
+
+	DeleteDC(hmdc);
+}
+
+void MwLLSetIcon(MwLL handle, MwLLPixmap pixmap) {
+	ICONINFO ii;
+	HICON	 ico;
+	HBITMAP	 mask;
+
+	mask = CreateBitmap(pixmap->width, pixmap->height, 1, 1, NULL);
+
+	memset(&ii, 0, sizeof(ii));
+	ii.fIcon    = TRUE;
+	ii.xHotspot = 0;
+	ii.yHotspot = 0;
+	ii.hbmMask  = mask;
+	ii.hbmColor = pixmap->hBitmap;
+
+	ico = CreateIconIndirect(&ii);
+
+	DeleteObject(mask);
+
+	SetClassLongPtr(handle->hWnd, GCLP_HICON, (LPARAM)ico);
+
+	DestroyIcon(ico);
 }
