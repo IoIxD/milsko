@@ -2,7 +2,7 @@
 #ifndef __MW_VULKAN_H__
 #define __MW_VULKAN_H__
 
-#if !defined(_WIN32) && !defined(__linux__)
+#if !defined(_WIN32) && !defined(__linux__) && !defined(__FreeBSD__)
 #error Vulkan is unsupported on the requested platform.
 #endif
 
@@ -18,13 +18,19 @@ extern "C" {
 
 MWDECL MwClass MwVulkanClass;
 
+// Add an extension to the list of extensions to enable prior to initialization.
+// This must be called before MwCreateWidget.
+MWDECL void MwVulkanEnableExtension(const char* ext_name);
+
 MWDECL PFN_vkGetInstanceProcAddr MwVulkanGetInstanceProcAddr(MwWidget handle);
 MWDECL VkInstance		 MwVulkanGetInstance(MwWidget handle);
 MWDECL VkSurfaceKHR		 MwVulkanGetSurface(MwWidget handle);
 MWDECL VkPhysicalDevice		 MwVulkanGetPhysicalDevice(MwWidget handle);
 MWDECL VkDevice			 MwVulkanGetLogicalDevice(MwWidget handle);
-MWDECL VkQueue			 MwVulkanGetQueue(MwWidget handle);
 MWDECL int			 MwVulkanGetGraphicsQueueIndex(MwWidget handle);
+MWDECL int			 MwVulkanGetPresentQueueIndex(MwWidget handle);
+MWDECL VkQueue			 MwVulkanGetGraphicsQueue(MwWidget handle);
+MWDECL VkQueue			 MwVulkanGetPresentQueue(MwWidget handle);
 
 #ifdef __cplusplus
 }

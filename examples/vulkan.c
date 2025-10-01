@@ -2,80 +2,122 @@
 #include <Mw/Milsko.h>
 #include <Mw/Vulkan.h>
 
+#include <X11/Xlib.h>
 #include <assert.h>
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vk_enum_string_helper.h>
 
-MwWidget window, vulkan, button;
+MwWidget window, vulkan;
 int	 ow = 300;
 int	 oh = 250;
 
-PFN_vkGetInstanceProcAddr instanceProcAddr;
+PFN_vkGetInstanceProcAddr _vkGetInstanceProcAddr;
 VkInstance		  instance;
 VkDevice		  device;
 VkPhysicalDevice	  physicalDevice;
+VkSurfaceKHR		  surface;
+VkQueue			  graphicsQueue;
+VkQueue			  presentQueue;
 
-VkImage		renderImage;
-VkPipeline	pipeline;
-VkCommandBuffer cmdBuffer;
-VkResult	res;
-VkRenderPass	renderPass;
-VkFramebuffer	framebuffer;
-VkFence		fence;
-VkQueue		queue;
+VkSwapchainKHR swapchain;
+VkImage*       swapchainImages;
+VkImageView*   swapchainImageView;
+uint32_t       swapchainImageViewCount;
+uint32_t       currentImageIndex;
+uint32_t       frameNumber;
 
-VkFenceCreateInfo fenceInfo = {};
+VkFence*     fences;
+VkSemaphore* renderFinishedSemaphores;
+VkSemaphore* imageAvaliableSemaphores;
 
-// Functions that we load in for Vulkan
-PFN_vkCreateImage			createImageFunc;
-PFN_vkGetImageMemoryRequirements	getImageMemoryRequirementsFunc;
-PFN_vkAllocateMemory			allocateMemoryFunc;
-PFN_vkBindImageMemory			bindImageMemoryFunc;
-PFN_vkGetPhysicalDeviceMemoryProperties getPhysicalDeviceMemoryPropertiesFunc;
-PFN_vkCreateImageView			createImageViewFunc;
-PFN_vkCreateRenderPass			createRenderPassFunc;
-PFN_vkCreateShaderModule		createShaderModuleFunc;
-PFN_vkCreatePipelineLayout		createPipelineLayoutFunc;
-PFN_vkCreateGraphicsPipelines		createGraphicsPipelinesFunc;
-PFN_vkCreateFramebuffer			createFramebufferFunc;
-PFN_vkCreateCommandPool			createCommandPoolFunc;
-PFN_vkAllocateCommandBuffers		allocateCommandBuffersFunc;
-PFN_vkCmdBeginRenderPass		cmdBeginRenderPassFunc;
-PFN_vkCmdBindPipeline			cmdBindPipelineFunc;
-PFN_vkCmdDraw				cmdDrawFunc;
-PFN_vkCmdEndRenderPass			cmdEndRenderpassFunc;
-PFN_vkQueueSubmit			queueSubmitFunc;
-PFN_vkWaitForFences			waitForFencesFunc;
-PFN_vkCreateFence			createFencesFunc;
-PFN_vkBeginCommandBuffer		beginCommandBufferFunc;
-PFN_vkEndCommandBuffer			endCommandBufferFunc;
-PFN_vkResetFences			resetFencesFunc;
+VkFramebuffer* framebuffers;
+
+VkPipeline	 pipeline;
+VkCommandBuffer* cmdBuffers;
+VkRenderPass	 renderPass;
+
+VkResult res;
+
+VkSwapchainCreateInfoKHR swapchainCreateInfo = {};
+
+#define MAX_FRAMES_IN_FLIGHT swapchainImageViewCount
+
+// convienence macro for loading a vulkan function pointer into memory
+#define LOAD_VK_FUNCTION(name) \
+	PFN_##name _##name = (PFN_##name)_vkGetInstanceProcAddr(instance, #name); \
+	assert(_##name);
 
 void tick(MwWidget handle, void* user_data, void* call_data) {
 	(void)handle;
 	(void)user_data;
 	(void)call_data;
 
-	VkCommandBufferBeginInfo beginInfo;
-	VkRenderPassBeginInfo	 renderPassInfo;
-	VkSubmitInfo		 submitInfo;
+	VkCommandBufferBeginInfo beginInfo	= {};
+	VkRenderPassBeginInfo	 renderPassInfo = {};
+	VkSubmitInfo		 submitInfo	= {};
+	VkPresentInfoKHR	 presentInfo	= {};
 
 	VkClearValue clearColor	   = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
 	uint32_t     vertexCount   = 3;
 	uint32_t     instanceCount = 1;
+
+	VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT};
+
+	LOAD_VK_FUNCTION(vkCreateFence);
+	LOAD_VK_FUNCTION(vkWaitForFences);
+	LOAD_VK_FUNCTION(vkResetFences);
+	LOAD_VK_FUNCTION(vkResetCommandBuffer);
+	LOAD_VK_FUNCTION(vkBeginCommandBuffer);
+	LOAD_VK_FUNCTION(vkEndCommandBuffer);
+	LOAD_VK_FUNCTION(vkQueueSubmit);
+	LOAD_VK_FUNCTION(vkAcquireNextImageKHR);
+	LOAD_VK_FUNCTION(vkQueuePresentKHR);
+	LOAD_VK_FUNCTION(vkCreateSwapchainKHR);
+
+	LOAD_VK_FUNCTION(vkCmdBeginRenderPass);
+	LOAD_VK_FUNCTION(vkCmdEndRenderPass);
+	LOAD_VK_FUNCTION(vkCmdDraw);
+	LOAD_VK_FUNCTION(vkCmdBindPipeline);
+
+	if((res = _vkWaitForFences(device, 1, &fences[frameNumber], VK_TRUE, UINT64_MAX)) != VK_SUCCESS) {
+		printf("error waiting on fence: %s\n", string_VkResult(res));
+		exit(0);
+	}
+
+	if((res = _vkResetFences(device, 1, &fences[frameNumber])) != VK_SUCCESS) {
+		printf("error resetting fence: %s\n", string_VkResult(res));
+		exit(0);
+	}
+
+swapchainRetry:
+	if((res = _vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAvaliableSemaphores[frameNumber], NULL, &currentImageIndex)) != VK_SUCCESS) {
+		if(res == VK_ERROR_OUT_OF_DATE_KHR) {
+			if(_vkCreateSwapchainKHR(device, &swapchainCreateInfo, NULL, &swapchain) != VK_SUCCESS) {
+				printf("failed to create swapchain: %s\n", string_VkResult(res));
+				exit(0);
+			};
+			goto swapchainRetry;
+		}
+	};
 
 	beginInfo.sType		   = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	beginInfo.pNext		   = NULL;
 	beginInfo.flags		   = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	beginInfo.pInheritanceInfo = NULL;
 
-	if((res = beginCommandBufferFunc(cmdBuffer, &beginInfo)) != VK_SUCCESS) {
+	if((res = _vkResetCommandBuffer(cmdBuffers[frameNumber], 0)) != VK_SUCCESS) {
+		printf("error beginning command buffer record: %s\n", string_VkResult(res));
+		exit(0);
+	}
+
+	if((res = _vkBeginCommandBuffer(cmdBuffers[frameNumber], &beginInfo)) != VK_SUCCESS) {
 		printf("error beginning command buffer record: %s\n", string_VkResult(res));
 		exit(0);
 	}
@@ -83,56 +125,54 @@ void tick(MwWidget handle, void* user_data, void* call_data) {
 	renderPassInfo.sType		 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 	renderPassInfo.pNext		 = NULL;
 	renderPassInfo.renderPass	 = renderPass;
-	renderPassInfo.framebuffer	 = framebuffer;
+	renderPassInfo.framebuffer	 = framebuffers[frameNumber];
 	renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
-	renderPassInfo.renderArea.extent = (VkExtent2D){(uint32_t)256, (uint32_t)256};
+	renderPassInfo.renderArea.extent = (VkExtent2D){(uint32_t)ow, (uint32_t)oh};
 	renderPassInfo.clearValueCount	 = 1;
 	renderPassInfo.pClearValues	 = &clearColor;
 
-	cmdBeginRenderPassFunc(cmdBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+	_vkCmdBeginRenderPass(cmdBuffers[frameNumber], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-	cmdBindPipelineFunc(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+	_vkCmdBindPipeline(cmdBuffers[frameNumber], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-	cmdDrawFunc(cmdBuffer, vertexCount, instanceCount, 0, 0);
+	_vkCmdDraw(cmdBuffers[frameNumber], vertexCount, instanceCount, 0, 0);
 
-	cmdEndRenderpassFunc(cmdBuffer);
+	_vkCmdEndRenderPass(cmdBuffers[frameNumber]);
 
-	if((res = endCommandBufferFunc(cmdBuffer)) != VK_SUCCESS) {
+	if((res = _vkEndCommandBuffer(cmdBuffers[frameNumber])) != VK_SUCCESS) {
 		printf("error recording command buffer: %s\n", string_VkResult(res));
 		exit(0);
 	}
 
 	submitInfo.sType		= VK_STRUCTURE_TYPE_SUBMIT_INFO;
 	submitInfo.pNext		= NULL;
-	submitInfo.waitSemaphoreCount	= 0;
-	submitInfo.pWaitSemaphores	= NULL;
-	submitInfo.pWaitDstStageMask	= NULL;
+	submitInfo.waitSemaphoreCount	= 1;
+	submitInfo.pWaitSemaphores	= &imageAvaliableSemaphores[frameNumber];
+	submitInfo.pWaitDstStageMask	= waitStages;
 	submitInfo.commandBufferCount	= 1;
-	submitInfo.pCommandBuffers	= &cmdBuffer;
-	submitInfo.signalSemaphoreCount = 0;
-	submitInfo.pSignalSemaphores	= NULL;
+	submitInfo.pCommandBuffers	= &cmdBuffers[frameNumber];
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores	= &renderFinishedSemaphores[frameNumber];
 
-	if((res = queueSubmitFunc(queue, 1, &submitInfo, fence)) != VK_SUCCESS) {
+	if((res = _vkQueueSubmit(graphicsQueue, 1, &submitInfo, fences[frameNumber])) != VK_SUCCESS) {
 		printf("error submitting command buffer: %s\n", string_VkResult(res));
 		exit(0);
 	}
 
-	if((res = resetFencesFunc(device, 1, &fence)) != VK_SUCCESS) {
-		printf("error resetting fence: %s\n", string_VkResult(res));
-		exit(0);
-	}
+	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
-	if((res = waitForFencesFunc(device, 1, &fence, VK_TRUE, 1)) != VK_SUCCESS) {
-		// If the function timed out, you should try:
-		if(res == VK_TIMEOUT) {
-			// AGAIN.
-			if(createFencesFunc(device, &fenceInfo, NULL, &fence) != VK_SUCCESS) {
-				printf("error creating fence: %s\n", string_VkResult(res));
-				exit(0);
-			}
-			// todo: ok maybe I should find out why this works and why creating the fence fails sometimes.
-		}
-	}
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores    = &renderFinishedSemaphores[frameNumber];
+	presentInfo.swapchainCount     = 1;
+	presentInfo.pSwapchains	       = &swapchain;
+	presentInfo.pImageIndices      = &currentImageIndex;
+
+	presentInfo.pResults = NULL; // Optional
+
+	_vkQueuePresentKHR(presentQueue, &presentInfo);
+
+	// frameNumber = currentImageIndex;
+	frameNumber = (frameNumber + 1) % (MAX_FRAMES_IN_FLIGHT);
 }
 
 void vulkan_setup(MwWidget handle) {
@@ -142,33 +182,20 @@ void vulkan_setup(MwWidget handle) {
 	void*  fragBuf;
 	size_t vertFileSize;
 	size_t fragFileSize;
+	size_t amountRead;
 
-	VkViewport    viewport	      = {};
-	VkRect2D      scissor	      = {};
-	VkCommandPool cmdPool	      = {};
-	int	      graphicsIdx     = {};
-	uint32_t      i		      = {};
-	uint32_t      memoryTypeIndex = {};
-	size_t	      amountRead;
-
-	VkFormat	     imageFormat       = VK_FORMAT_R8G8B8A8_UNORM;
-	VkDeviceMemory	     renderImageMemory = {};
-	VkResult	     res	       = {};
-	VkImageView	     renderImageView   = {};
-	VkShaderModule	     fragShaderModule  = {};
-	VkShaderModule	     vertShaderModule  = {};
-	VkPipelineLayout     pipelineLayout    = {};
-	VkMemoryRequirements memRequirements   = {};
-
+	uint32_t		i;
+	VkViewport		viewport = {};
+	VkRect2D		scissor	 = {};
+	VkCommandPool		cmdPool	 = {};
+	VkResult		res	 = 0;
+	VkShaderModule		fragShaderModule;
+	VkShaderModule		vertShaderModule;
+	VkPipelineLayout	pipelineLayout	   = {};
 	VkAttachmentDescription colorAttachment	   = {};
 	VkAttachmentReference	colorAttachmentRef = {};
 	VkSubpassDescription	subpass		   = {};
 
-	VkPhysicalDeviceMemoryProperties memProperties = {};
-
-	VkImageViewCreateInfo		       imgViewCreateInfo    = {};
-	VkImageCreateInfo		       imgCreateInfo	    = {};
-	VkMemoryAllocateInfo		       memAllocInfo	    = {};
 	VkRenderPassCreateInfo		       renderPassInfo	    = {};
 	VkShaderModuleCreateInfo	       vertInfo		    = {};
 	VkShaderModuleCreateInfo	       fragInfo		    = {};
@@ -187,121 +214,108 @@ void vulkan_setup(MwWidget handle) {
 	VkFramebufferCreateInfo		       framebufferInfo	    = {};
 	VkCommandBufferAllocateInfo	       allocInfo	    = {};
 	VkCommandPoolCreateInfo		       poolInfo		    = {};
+	VkImageViewCreateInfo		       imageViewCreateInfo  = {};
+	VkSemaphoreCreateInfo		       semaphoreInfo	    = {};
+	VkFenceCreateInfo		       fenceInfo	    = {};
 
-	instanceProcAddr = MwVulkanGetInstanceProcAddr(handle);
-	instance	 = MwVulkanGetInstance(handle);
-	device		 = MwVulkanGetLogicalDevice(handle);
-	graphicsIdx	 = MwVulkanGetGraphicsQueueIndex(handle);
-	physicalDevice	 = MwVulkanGetPhysicalDevice(handle);
-	queue		 = MwVulkanGetQueue(handle);
+	_vkGetInstanceProcAddr = MwVulkanGetInstanceProcAddr(handle);
+	instance	       = MwVulkanGetInstance(handle);
+	device		       = MwVulkanGetLogicalDevice(handle);
+	physicalDevice	       = MwVulkanGetPhysicalDevice(handle);
+	graphicsQueue	       = MwVulkanGetGraphicsQueue(handle);
+	presentQueue	       = MwVulkanGetPresentQueue(handle);
+	surface		       = MwVulkanGetSurface(handle);
 
-	createImageFunc			      = (PFN_vkCreateImage)instanceProcAddr(instance, "vkCreateImage");
-	getImageMemoryRequirementsFunc	      = (PFN_vkGetImageMemoryRequirements)instanceProcAddr(instance, "vkGetImageMemoryRequirements");
-	allocateMemoryFunc		      = (PFN_vkAllocateMemory)instanceProcAddr(instance, "vkAllocateMemory");
-	bindImageMemoryFunc		      = (PFN_vkBindImageMemory)instanceProcAddr(instance, "vkBindImageMemory");
-	getPhysicalDeviceMemoryPropertiesFunc = (PFN_vkGetPhysicalDeviceMemoryProperties)instanceProcAddr(instance, "vkGetPhysicalDeviceMemoryProperties");
-	createImageViewFunc		      = (PFN_vkCreateImageView)instanceProcAddr(instance, "vkCreateImageView");
-	createRenderPassFunc		      = (PFN_vkCreateRenderPass)instanceProcAddr(instance, "vkCreateRenderPass");
-	createShaderModuleFunc		      = (PFN_vkCreateShaderModule)instanceProcAddr(instance, "vkCreateShaderModule");
-	createPipelineLayoutFunc	      = (PFN_vkCreatePipelineLayout)instanceProcAddr(instance, "vkCreatePipelineLayout");
-	createGraphicsPipelinesFunc	      = (PFN_vkCreateGraphicsPipelines)instanceProcAddr(instance, "vkCreateGraphicsPipelines");
-	createFramebufferFunc		      = (PFN_vkCreateFramebuffer)instanceProcAddr(instance, "vkCreateFramebuffer");
-	createCommandPoolFunc		      = (PFN_vkCreateCommandPool)instanceProcAddr(instance, "vkCreateCommandPool");
-	allocateCommandBuffersFunc	      = (PFN_vkAllocateCommandBuffers)instanceProcAddr(instance, "vkAllocateCommandBuffers");
-	cmdBeginRenderPassFunc		      = (PFN_vkCmdBeginRenderPass)instanceProcAddr(instance, "vkCmdBeginRenderPass");
-	cmdBindPipelineFunc		      = (PFN_vkCmdBindPipeline)instanceProcAddr(instance, "vkCmdBindPipeline");
-	cmdDrawFunc			      = (PFN_vkCmdDraw)instanceProcAddr(instance, "vkCmdDraw");
-	cmdEndRenderpassFunc		      = (PFN_vkCmdEndRenderPass)instanceProcAddr(instance, "vkCmdEndRenderPass");
-	queueSubmitFunc			      = (PFN_vkQueueSubmit)instanceProcAddr(instance, "vkQueueSubmit");
-	waitForFencesFunc		      = (PFN_vkWaitForFences)instanceProcAddr(instance, "vkWaitForFences");
-	createFencesFunc		      = (PFN_vkCreateFence)instanceProcAddr(instance, "vkCreateFence");
-	beginCommandBufferFunc		      = (PFN_vkBeginCommandBuffer)instanceProcAddr(instance, "vkBeginCommandBuffer");
-	endCommandBufferFunc		      = (PFN_vkEndCommandBuffer)instanceProcAddr(instance, "vkEndCommandBuffer");
-	resetFencesFunc			      = (PFN_vkResetFences)instanceProcAddr(instance, "vkResetFences");
+	LOAD_VK_FUNCTION(vkCreateShaderModule);
+	LOAD_VK_FUNCTION(vkCreatePipelineLayout);
+	LOAD_VK_FUNCTION(vkCreateGraphicsPipelines);
+	LOAD_VK_FUNCTION(vkCreateCommandPool);
+	LOAD_VK_FUNCTION(vkCreateFramebuffer);
+	LOAD_VK_FUNCTION(vkAllocateCommandBuffers);
+	LOAD_VK_FUNCTION(vkCreateFence);
+	LOAD_VK_FUNCTION(vkCreateSemaphore);
+	LOAD_VK_FUNCTION(vkCreateSwapchainKHR);
+	LOAD_VK_FUNCTION(vkGetSwapchainImagesKHR);
+	LOAD_VK_FUNCTION(vkCreateImageView);
+	LOAD_VK_FUNCTION(vkCreateRenderPass);
 
-	// create a 256x256 image to draw onto
-	imgCreateInfo.sType		    = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	imgCreateInfo.pNext		    = NULL;
-	imgCreateInfo.flags		    = 0;
-	imgCreateInfo.imageType		    = VK_IMAGE_TYPE_2D;
-	imgCreateInfo.format		    = imageFormat;
-	imgCreateInfo.extent.width	    = 256;
-	imgCreateInfo.extent.height	    = 256;
-	imgCreateInfo.extent.depth	    = 1;
-	imgCreateInfo.mipLevels		    = 1;
-	imgCreateInfo.arrayLayers	    = 1,
-	imgCreateInfo.samples		    = VK_SAMPLE_COUNT_1_BIT;
-	imgCreateInfo.tiling		    = VK_IMAGE_TILING_OPTIMAL;
-	imgCreateInfo.usage		    = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // | VK_IMAGE_USAGE_SAMPLED_BIT,
-	imgCreateInfo.sharingMode	    = VK_SHARING_MODE_EXCLUSIVE;
-	imgCreateInfo.queueFamilyIndexCount = 0;
-	imgCreateInfo.pQueueFamilyIndices   = NULL;
-	imgCreateInfo.initialLayout	    = VK_IMAGE_LAYOUT_UNDEFINED;
-	if((res = createImageFunc(device, &imgCreateInfo, NULL, &renderImage)) != VK_SUCCESS) {
-		printf("error creating image: %s\n", string_VkResult(res));
+	// create a swapchain
+	swapchainCreateInfo.sType	     = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+	swapchainCreateInfo.surface	     = surface;
+	swapchainCreateInfo.minImageCount    = 3;
+	swapchainCreateInfo.imageFormat	     = VK_FORMAT_B8G8R8A8_SRGB;
+	swapchainCreateInfo.imageColorSpace  = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+	swapchainCreateInfo.imageExtent	     = (VkExtent2D){.width = ow, .height = oh},
+	swapchainCreateInfo.imageArrayLayers = 1,
+	swapchainCreateInfo.imageUsage	     = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+					 VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+					 VK_IMAGE_USAGE_SAMPLED_BIT;
+	// th is how we specify no transformation.
+	swapchainCreateInfo.preTransform   = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+	swapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+	swapchainCreateInfo.presentMode	   = VK_PRESENT_MODE_IMMEDIATE_KHR;
+	// we don't care about the color of pixels that are obscured.
+	swapchainCreateInfo.clipped	 = VK_TRUE;
+	swapchainCreateInfo.oldSwapchain = NULL;
+
+	if(MwVulkanGetGraphicsQueueIndex(handle) != MwVulkanGetPresentQueueIndex(handle)) {
+		swapchainCreateInfo.imageSharingMode	  = VK_SHARING_MODE_CONCURRENT;
+		swapchainCreateInfo.queueFamilyIndexCount = 2;
+
+		uint32_t indices[] = {
+		    MwVulkanGetGraphicsQueueIndex(handle),
+		    MwVulkanGetPresentQueueIndex(handle),
+		};
+		swapchainCreateInfo.pQueueFamilyIndices = indices;
+	} else {
+		swapchainCreateInfo.imageSharingMode	  = VK_SHARING_MODE_EXCLUSIVE;
+		swapchainCreateInfo.queueFamilyIndexCount = 0;
+		swapchainCreateInfo.pQueueFamilyIndices	  = NULL;
+	}
+
+	if(_vkCreateSwapchainKHR(device, &swapchainCreateInfo, NULL, &swapchain) != VK_SUCCESS) {
+		printf("failed to create swapchain: %s\n", string_VkResult(res));
 		exit(0);
 	};
 
-	// get the memory requirments for the image.
-	getImageMemoryRequirementsFunc(device, renderImage, &memRequirements);
+	imageViewCreateInfo.sType			    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	imageViewCreateInfo.viewType			    = VK_IMAGE_VIEW_TYPE_2D;
+	imageViewCreateInfo.format			    = swapchainCreateInfo.imageFormat;
+	imageViewCreateInfo.components.r		    = VK_COMPONENT_SWIZZLE_R;
+	imageViewCreateInfo.components.g		    = VK_COMPONENT_SWIZZLE_G;
+	imageViewCreateInfo.components.b		    = VK_COMPONENT_SWIZZLE_B;
+	imageViewCreateInfo.components.a		    = VK_COMPONENT_SWIZZLE_A;
+	imageViewCreateInfo.subresourceRange.aspectMask	    = VK_IMAGE_ASPECT_COLOR_BIT;
+	imageViewCreateInfo.subresourceRange.baseMipLevel   = 0;
+	imageViewCreateInfo.subresourceRange.levelCount	    = VK_REMAINING_MIP_LEVELS;
+	imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+	imageViewCreateInfo.subresourceRange.layerCount	    = VK_REMAINING_ARRAY_LAYERS;
 
-	// Find a memory type based on the requirements.
-	getPhysicalDeviceMemoryPropertiesFunc(physicalDevice, &memProperties);
-	for(i = 0; i < memProperties.memoryTypeCount; i++) {
-		if((memRequirements.memoryTypeBits & (1 << i)) &&
-		   (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
-			memoryTypeIndex = i;
-			break;
+	if(_vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageViewCount, NULL) != VK_SUCCESS) {
+		printf("failed to get swapchain images: %s\n", string_VkResult(res));
+		exit(0);
+	}
+	swapchainImages	   = malloc(sizeof(VkImage) * MAX_FRAMES_IN_FLIGHT);
+	swapchainImageView = malloc(sizeof(VkImageView) * MAX_FRAMES_IN_FLIGHT);
+	_vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageViewCount, swapchainImages);
+	for(i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		imageViewCreateInfo.image = swapchainImages[i];
+		if(_vkCreateImageView(device, &imageViewCreateInfo, NULL, &swapchainImageView[i]) != VK_SUCCESS) {
+			printf("failed to get swapchain images: %s\n", string_VkResult(res));
+			exit(0);
 		}
-	}
-
-	// Based on the memory requirements specify the allocation information.
-	memAllocInfo.sType	     = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	memAllocInfo.pNext	     = NULL;
-	memAllocInfo.allocationSize  = memRequirements.size;
-	memAllocInfo.memoryTypeIndex = memoryTypeIndex;
-
-	// Allocate memory.
-	if((res = allocateMemoryFunc(device, &memAllocInfo, NULL, &renderImageMemory)) != VK_SUCCESS) {
-		printf("error allocating image memory: %s\n", string_VkResult(res));
-		exit(0);
-	}
-
-	// bind image to memory
-	bindImageMemoryFunc(device, renderImage, renderImageMemory, 0);
-
-	//  Create an Image View for the Render Target Image.
-	imgViewCreateInfo.sType				  = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	imgViewCreateInfo.pNext				  = NULL;
-	imgViewCreateInfo.flags				  = 0;
-	imgViewCreateInfo.image				  = renderImage;
-	imgViewCreateInfo.viewType			  = VK_IMAGE_VIEW_TYPE_2D;
-	imgViewCreateInfo.format			  = imageFormat;
-	imgViewCreateInfo.components.r			  = VK_COMPONENT_SWIZZLE_IDENTITY;
-	imgViewCreateInfo.components.g			  = VK_COMPONENT_SWIZZLE_IDENTITY;
-	imgViewCreateInfo.components.b			  = VK_COMPONENT_SWIZZLE_IDENTITY;
-	imgViewCreateInfo.components.a			  = VK_COMPONENT_SWIZZLE_IDENTITY;
-	imgViewCreateInfo.subresourceRange.aspectMask	  = VK_IMAGE_ASPECT_COLOR_BIT;
-	imgViewCreateInfo.subresourceRange.baseMipLevel	  = 0;
-	imgViewCreateInfo.subresourceRange.levelCount	  = 1;
-	imgViewCreateInfo.subresourceRange.baseArrayLayer = 0;
-	imgViewCreateInfo.subresourceRange.layerCount	  = 1;
-
-	if((res = createImageViewFunc(device, &imgViewCreateInfo, NULL, &renderImageView)) != VK_SUCCESS) {
-		printf("error creating image views: %s\n", string_VkResult(res));
-		exit(0);
 	}
 
 	//  Create a Render Pass.
 	colorAttachment.flags	       = 0;
-	colorAttachment.format	       = imageFormat;
+	colorAttachment.format	       = swapchainCreateInfo.imageFormat;
 	colorAttachment.samples	       = VK_SAMPLE_COUNT_1_BIT;
 	colorAttachment.loadOp	       = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	colorAttachment.storeOp	       = VK_ATTACHMENT_STORE_OP_STORE;
 	colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	colorAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-	colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	colorAttachmentRef.attachment  = 0;
 	colorAttachmentRef.layout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
@@ -326,7 +340,7 @@ void vulkan_setup(MwWidget handle) {
 	renderPassInfo.dependencyCount = 0;
 	renderPassInfo.pDependencies   = NULL;
 
-	if((res = createRenderPassFunc(device, &renderPassInfo, NULL, &renderPass)) != VK_SUCCESS) {
+	if((res = _vkCreateRenderPass(device, &renderPassInfo, NULL, &renderPass)) != VK_SUCCESS) {
 		printf("error creating the render pass: %s\n", string_VkResult(res));
 		exit(0);
 	}
@@ -349,7 +363,7 @@ void vulkan_setup(MwWidget handle) {
 	vertInfo.codeSize = amountRead;
 	vertInfo.pCode	  = vertBuf;
 
-	if(createShaderModuleFunc(device, &vertInfo, NULL, &vertShaderModule) != VK_SUCCESS) {
+	if(_vkCreateShaderModule(device, &vertInfo, NULL, &vertShaderModule) != VK_SUCCESS) {
 		printf("failed to create the shader module: %s\n", string_VkResult(res));
 		exit(0);
 	}
@@ -369,7 +383,7 @@ void vulkan_setup(MwWidget handle) {
 	fragInfo.codeSize = amountRead;
 	fragInfo.pCode	  = fragBuf;
 
-	if(createShaderModuleFunc(device, &fragInfo, NULL, &fragShaderModule) != VK_SUCCESS) {
+	if(_vkCreateShaderModule(device, &fragInfo, NULL, &fragShaderModule) != VK_SUCCESS) {
 		printf("error creating the shader module: %s\n", string_VkResult(res));
 		exit(0);
 	}
@@ -382,7 +396,7 @@ void vulkan_setup(MwWidget handle) {
 	pipelineLayoutInfo.pSetLayouts		  = NULL;
 	pipelineLayoutInfo.pushConstantRangeCount = 0;
 
-	if((res = createPipelineLayoutFunc(device, &pipelineLayoutInfo, NULL, &pipelineLayout)) != VK_SUCCESS) {
+	if((res = _vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL, &pipelineLayout)) != VK_SUCCESS) {
 		printf("error creating the pipeline layout: %s\n", string_VkResult(res));
 		exit(0);
 	}
@@ -422,8 +436,8 @@ void vulkan_setup(MwWidget handle) {
 
 	viewport.x	  = 0.0f;
 	viewport.y	  = 0.0f;
-	viewport.width	  = (float)256;
-	viewport.height	  = (float)256;
+	viewport.width	  = (float)ow;
+	viewport.height	  = (float)oh;
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
 
@@ -502,56 +516,81 @@ void vulkan_setup(MwWidget handle) {
 	pipelineInfo.basePipelineHandle	 = VK_NULL_HANDLE;
 	pipelineInfo.basePipelineIndex	 = 0;
 
-	if((res = createGraphicsPipelinesFunc(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline)) != VK_SUCCESS) {
+	if((res = _vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline)) != VK_SUCCESS) {
 		printf("failed to create graphics pipeline: %s\n", string_VkResult(res));
 		exit(0);
 	}
+
+	framebuffers = malloc(sizeof(VkFramebuffer) * MAX_FRAMES_IN_FLIGHT);
 
 	framebufferInfo.sType		= VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 	framebufferInfo.pNext		= NULL;
 	framebufferInfo.flags		= 0;
 	framebufferInfo.renderPass	= renderPass;
 	framebufferInfo.attachmentCount = 1;
-	framebufferInfo.pAttachments	= &renderImageView;
-	framebufferInfo.width		= 256;
-	framebufferInfo.height		= 256;
+	framebufferInfo.width		= ow;
+	framebufferInfo.height		= oh;
 	framebufferInfo.layers		= 1;
-
-	if((res = createFramebufferFunc(device, &framebufferInfo, NULL, &framebuffer)) != VK_SUCCESS) {
-		printf("error creating the frame buffer: %s\n", string_VkResult(res));
-		exit(0);
+	for(i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		framebufferInfo.pAttachments = &swapchainImageView[i];
+		if((res = _vkCreateFramebuffer(device, &framebufferInfo, NULL, &framebuffers[i])) != VK_SUCCESS) {
+			printf("error creating the frame buffer: %s\n", string_VkResult(res));
+			exit(0);
+		}
 	}
 
 	// Create Command Pool.
 	poolInfo.sType		  = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	poolInfo.pNext		  = NULL;
-	poolInfo.flags		  = 0;
-	poolInfo.queueFamilyIndex = graphicsIdx;
+	poolInfo.flags		  = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	poolInfo.queueFamilyIndex = MwVulkanGetGraphicsQueueIndex(handle);
 
-	if((res = createCommandPoolFunc(device, &poolInfo, NULL, &cmdPool)) != VK_SUCCESS) {
+	if((res = _vkCreateCommandPool(device, &poolInfo, NULL, &cmdPool)) != VK_SUCCESS) {
 		printf("error creating the command pool: %s\n", string_VkResult(res));
 		exit(0);
 	}
 
-	// 15. Create Command Buffer to record draw commands.
+	// Create Command Buffer to record draw commands.
 	allocInfo.sType		     = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	allocInfo.pNext		     = NULL;
 	allocInfo.commandPool	     = cmdPool;
 	allocInfo.level		     = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	allocInfo.commandBufferCount = 1;
 
-	if((res = allocateCommandBuffersFunc(device, &allocInfo, &cmdBuffer)) != VK_SUCCESS) {
-		printf("error allocating the command buffers: %s\n", string_VkResult(res));
-		exit(0);
+	cmdBuffers = malloc(sizeof(VkCommandBuffer) * MAX_FRAMES_IN_FLIGHT);
+
+	for(i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		if((res = _vkAllocateCommandBuffers(device, &allocInfo, &cmdBuffers[i])) != VK_SUCCESS) {
+			printf("error allocating the command buffers: %s\n", string_VkResult(res));
+			exit(0);
+		}
 	}
 
 	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 	fenceInfo.pNext = 0;
-	fenceInfo.flags = 0;
+	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-	if(createFencesFunc(device, &fenceInfo, NULL, &fence) != VK_SUCCESS) {
-		printf("error creating fence: %s\n", string_VkResult(res));
-		exit(0);
+	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+	semaphoreInfo.pNext = 0;
+	semaphoreInfo.flags = VK_SEMAPHORE_TYPE_BINARY;
+
+	imageAvaliableSemaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+	renderFinishedSemaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+	fences			 = malloc(sizeof(VkFence) * MAX_FRAMES_IN_FLIGHT);
+
+	for(i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+		if(_vkCreateSemaphore(device, &semaphoreInfo, NULL, &imageAvaliableSemaphores[i]) != VK_SUCCESS) {
+			printf("error creating fence: %s\n", string_VkResult(res));
+			exit(0);
+		}
+		if(_vkCreateSemaphore(device, &semaphoreInfo, NULL, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+			printf("error creating fence: %s\n", string_VkResult(res));
+			exit(0);
+		}
+		if(_vkCreateFence(device, &fenceInfo, NULL, &fences[i]) != VK_SUCCESS) {
+			printf("error creating fence: %s\n", string_VkResult(res));
+			exit(0);
+		}
 	}
 }
 
@@ -559,6 +598,8 @@ int main() {
 	window = MwVaCreateWidget(MwWindowClass, "main", NULL, 0, 0, 400, 450,
 				  MwNtitle, "hello world",
 				  NULL);
+
+	MwVulkanEnableExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 	vulkan = MwCreateWidget(MwVulkanClass, "vulkan", window, 50, 50, ow, oh);
 
 	MwAddUserHandler(window, MwNtickHandler, tick, NULL);
