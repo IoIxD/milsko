@@ -31,7 +31,7 @@ $(error Add your platform definition)
 endif
 
 ifeq ($(UNIX),1)
-L_CFLAGS += -DUSE_X11 -g
+L_CFLAGS += -DUSE_X11
 L_OBJS += src/x11.o
 L_LIBS += -lX11 -lXrender -lXext -lGL
 
