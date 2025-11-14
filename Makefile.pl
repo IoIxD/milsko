@@ -11,7 +11,13 @@ foreach my $l (@ARGV) {
     }
 }
 
+# stackoverflow tells me this is how we get the pwd
+use Cwd qw();
+our $cwd = Cwd::cwd();
+
+
 our $cc      = defined($ENV{CC}) ? $ENV{CC} : "gcc";
+our $ar      = defined($ENV{AR}) ? $ENV{AR} : "ar";
 our $incdir  = "-I include";
 our $cflags  = "-fPIC -D_MILSKO";
 our $libdir  = "";
@@ -20,6 +26,7 @@ our $math    = "-lm";
 our $thread  = "-lpthread";
 our $shared  = "-shared";
 our $backend = "";
+our $lib_type = "shared";
 
 our $library_prefix    = "lib";
 our $library_suffix    = ".so";
@@ -30,9 +37,16 @@ our @library_targets  = ();
 our @examples_targets = ();
 our %examples_libs    = ();
 
+our $sys_include_dir = "";
+our $sys_lib_dir = "";
+
+our $example_mw_link = "-lMw";
+
 our $cross = 0;
 
 require("./pl/utils.pl");
+
+
 
 param_set("classic-theme",        0);
 param_set("stb-image",            1);
@@ -72,6 +86,17 @@ foreach my $l (@ARGV) {
     }
     elsif ($l eq "--cross") {
         $cross = 1;
+    }
+    elsif ($l =~ /^--lib_type=(.+)$/) {
+        $lib_type = $1;
+    }
+    # for systems where an SDK is needed (i.e. PalmOS, classic Mac)
+    elsif ($l =~ /^--sys_include_dir=(.+)$/) {
+        $sys_include_dir = $1;
+        $incdir = "${incdir} -I${sys_include_dir}"
+    } elsif ($l =~ /^--sys_lib_dir=(.+)$/) {
+        $sys_lib_dir = $1;
+        $cflags = "${cflags} -L${sys_lib_dir}"
     }
     elsif (($l eq "-h") or ($l eq "--help")) {
         print("Milsko Toolkit Configuration Utility\n");
@@ -118,6 +143,11 @@ else {
 
 require("./pl/rules.pl");
 
+if($lib_type eq "static") {
+    $example_mw_link = "-L${cwd}/src/ -static -lMw";
+    $library_suffix = ".a";
+};
+
 print("Target : " . $target . "\n");
 
 my @l = ();
@@ -138,6 +168,7 @@ foreach my $e (param_list()) {
 print("Enabled: " . join(" ", @l) . "\n");
 
 open(OUT, ">", "Makefile");
+print(OUT "AR = ${ar}\n");
 print(OUT "CC = ${cc}\n");
 print(OUT "INCDIR = ${incdir}\n");
 print(OUT "CFLAGS = ${cflags}\n");
@@ -164,10 +195,18 @@ print(OUT "\n");
 print(  OUT "src/${library_prefix}Mw${library_suffix}: "
       . join(" ", @library_targets)
       . "\n");
+
+if($lib_type ne "static") {
 print(OUT
 "	\$(CC) \$(SHARED) \$(LDFLAGS\) \$(LIBDIR) -o src/${library_prefix}Mw${library_suffix} "
       . join(" ", @library_targets)
       . " \$(LIBS)\n");
+} else {
+print(OUT
+"	\$(AR) rcs -o src/${library_prefix}Mw.a "
+      . join(" ", @library_targets)
+      . " \$(LIBS)\n");
+}
 
 foreach my $l (@library_targets) {
     my $warn = "-Wall -Wextra -Wno-sign-compare";
@@ -202,11 +241,11 @@ foreach my $l (@examples_targets) {
 "${l}: ${s}${object_suffix} src/${library_prefix}Mw${library_suffix}\n"
     );
     print(OUT
-"	\$(CC) -L src -Wl,-R./src \$\(LIBDIR) -o ${l} ${s}${object_suffix} -lMw ${math} ${libs}\n"
+"	\$(CC) -L src -Wl,-R./src \$\(CFLAGS) \$\(LIBDIR) -o ${l} ${s}${object_suffix} ${example_mw_link} ${math} ${libs}\n"
     );
     print(OUT "${s}${object_suffix}: ${s}.c\n");
     print(OUT
-          "	\$(CC) -c \$\(INCDIR) -o ${s}${object_suffix} ${s}.c -lMw ${math}\n"
+          "	\$(CC) -c \$\(CFLAGS) \$\(INCDIR) -o ${s}${object_suffix} ${s}.c ${example_mw_link} ${math}\n"
     );
 }
 print(OUT "\n");

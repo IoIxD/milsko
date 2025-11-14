@@ -6,6 +6,10 @@
 #ifndef __MW_COLORPICKER_H__
 #define __MW_COLORPICKER_H__
 
+#ifdef USE_PALM
+#error "ColorPicker dialog not supported on PalmOS"
+#endif
+
 #include <Mw/MachDep.h>
 #include <Mw/TypeDefs.h>
 

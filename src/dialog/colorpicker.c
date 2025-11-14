@@ -1,6 +1,8 @@
 /* $Id$ */
 #include <Mw/Milsko.h>
 
+#ifndef USE_PALM
+
 #define WIN_SIZE 464
 #define PICKER_SIZE 360
 #define IMG_POS_X(w) ((w - PICKER_SIZE) / 2)
@@ -377,3 +379,5 @@ MwWidget MwColorPicker(MwWidget handle, const char* title) {
 
 	return window;
 }
+
+#endif

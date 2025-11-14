@@ -56,6 +56,9 @@ struct _MwLLCommonPixmap {
 #ifdef USE_GDI
 #include "../../src/backend/gdi.h"
 #endif
+#ifdef USE_PALM
+#include "../../src/backend/palm.h"
+#endif
 
 union _MwLL {
 	struct _MwLLCommon common;
@@ -64,6 +67,9 @@ union _MwLL {
 #endif
 #ifdef USE_GDI
 	struct _MwLLGDI gdi;
+#endif
+#ifdef USE_PALM
+	struct _MwLLPalm palm;
 #endif
 };
 
@@ -75,6 +81,9 @@ union _MwLLColor {
 #ifdef USE_GDI
 	struct _MwLLGDIColor gdi;
 #endif
+#ifdef USE_PALM
+	struct _MwLLPalmColor palm;
+#endif
 };
 
 union _MwLLPixmap {
@@ -84,6 +93,9 @@ union _MwLLPixmap {
 #endif
 #ifdef USE_GDI
 	struct _MwLLGDIPixmap gdi;
+#endif
+#ifdef USE_PALM
+	struct _MwLLPalmPixmap palm;
 #endif
 };
 #endif

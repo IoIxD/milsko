@@ -106,6 +106,9 @@ static void nav_activate(MwWidget handle, void* user, void* call) {
 
 	if(strcmp(e, "Home") == 0) {
 #ifdef _WIN32
+#elif defined(USE_PALM)
+		VFSVolumeEnumerate();
+
 #else
 		struct passwd* p = getpwuid(getuid());
 

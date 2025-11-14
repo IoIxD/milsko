@@ -31,7 +31,9 @@
 
 #include <Mw/Dialog/MessageBox.h>
 #include <Mw/Dialog/FileChooser.h>
+#ifndef USE_PALM
 #include <Mw/Dialog/ColorPicker.h>
+#endif
 
 #include <Mw/Widget/Window.h>
 #include <Mw/Widget/Menu.h>

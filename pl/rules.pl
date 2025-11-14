@@ -25,6 +25,10 @@ elsif ($backend eq "gdi") {
 
     $gl_libs = "-lopengl32 -lglu32";
 }
+elsif ($backend eq "palm") {
+    add_cflags("-DUSE_PALM");
+    new_object("src/backend/palm.c")
+}
 
 if (param_get("stb-image")) {
     add_cflags("-DUSE_STB_IMAGE");

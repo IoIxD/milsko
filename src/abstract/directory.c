@@ -7,6 +7,9 @@ typedef struct dir {
 	WIN32_FIND_DATA ffd;
 	int		first;
 } dir_t;
+#elif USE_PALM
+typedef struct dir {
+} dir_t;
 #else
 typedef struct dir {
 	DIR*  dir;
@@ -27,6 +30,8 @@ void* MwDirectoryOpen(const char* path) {
 	}
 	free(p);
 	dir->first = 1;
+#elif USE_PALM
+#warning TODO
 #else
 	if((dir->dir = opendir(path)) == NULL) {
 		free(dir);
@@ -43,6 +48,8 @@ void MwDirectoryClose(void* handle) {
 	dir_t* dir = handle;
 #ifdef _WIN32
 	FindClose(dir->hFind);
+#elif USE_PALM
+#warning TODO
 #else
 	closedir(dir->dir);
 	free(dir->base);
@@ -73,6 +80,8 @@ MwDirectoryEntry* MwDirectoryRead(void* handle) {
 	entry->size |= dir->ffd.nFileSizeHigh;
 	entry->size = entry->size << 32;
 	entry->size |= dir->ffd.nFileSizeLow;
+#elif USE_PALM
+#warning TODO
 #else
 	struct dirent* d;
 	struct stat    s;
@@ -116,6 +125,9 @@ char* MwDirectoryCurrent(void) {
 	GetCurrentDirectory(len, out);
 
 	return out;
+#elif USE_PALM
+#warning TODO
+	return NULL;
 #else
 	return getcwd(NULL, 0);
 #endif

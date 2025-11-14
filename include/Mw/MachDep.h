@@ -13,10 +13,10 @@
 #include <setjmp.h>
 #include <sys/types.h>
 #include <assert.h>
+#include <time.h>
 #include <math.h>
 #include <ctype.h>
-#include <time.h>
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <direct.h>
 
 #ifdef _MILSKO
@@ -36,7 +36,9 @@
 #define GET_WHEEL_DELTA_WPARAM(x) ((short)HIWORD(x))
 #endif
 #endif
-
+#else
+#ifdef USE_PALM
+#include <PalmOS.h>
 #else
 #include <unistd.h>
 #include <pwd.h>
@@ -44,6 +46,7 @@
 #include <signal.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
 #endif
 
 #ifndef M_PI

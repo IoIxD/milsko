@@ -6,5 +6,7 @@ examples/*/*
 examples/*/*.exe
 !examples/*/
 !examples/*.*
-!examples/*/*.*
+!examples/*/*.c
+!examples/*/*.txt
 compile_flags.txt
+Makefile

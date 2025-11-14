@@ -41,4 +41,20 @@ void MwMutexLock(void* handle) {
 void MwMutexUnlock(void* handle) {
 	pthread_mutex_unlock(handle);
 }
+// https://palm.wiki/development/docs/601/PalmOSCompanion/Nutshell.html#995872
+// "Palm OS applications are generally single-threaded, event-driven programs."
+// Uhhhhhhhhhh
+#elif defined(PALM)
+void* MwMutexCreate(void) {
+	return NULL;
+}
+
+void MwMutexDestroy(void* handle) {
+}
+
+void MwMutexLock(void* handle) {
+}
+
+void MwMutexUnlock(void* handle) {
+}
 #endif

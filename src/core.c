@@ -612,6 +612,9 @@ int MwLLX11CallInit(void);
 #ifdef USE_GDI
 int MwLLGDICallInit(void);
 #endif
+#ifdef USE_PALM
+int MwLLPalmCallInit(void);
+#endif
 int MwLibraryInit(void) {
 	call_t calls[] = {
 #ifdef USE_X11
